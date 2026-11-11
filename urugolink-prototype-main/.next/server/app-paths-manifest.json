@@ -1,0 +1,6 @@
+{
+  "/properties/[id]/page": "app/properties/[id]/page.js",
+  "/admin-dashboard/page": "app/admin-dashboard/page.js",
+  "/page": "app/page.js",
+  "/login/page": "app/login/page.js"
+}
