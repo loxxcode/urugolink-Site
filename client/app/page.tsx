@@ -9,6 +9,7 @@ import {
   ChevronDown, Plus, Building2, CheckCircle2, Phone, RefreshCw, LogOut
 } from "lucide-react";
 import { formatPrice } from "./properties-data";
+import TenantDashboard from "./tenant-dashboard";
 
 /* ───────── API ───────── */
 const API = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000").replace(/\/$/, "");
@@ -127,6 +128,7 @@ export default function HomePage() {
   const [kind, setKind] = useState("Any property");
   const [maxPrice, setMaxPrice] = useState("Any budget");
   const [saved, setSaved] = useState<string[]>([]);
+  const [savedItems, setSavedItems] = useState<Card[]>([]);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [notice, setNotice] = useState<ReactNode>("");
@@ -138,6 +140,7 @@ export default function HomePage() {
   const menuRef = useRef<HTMLDivElement>(null);
   const user = auth.status === "user" ? auth.user : null;
   const isProvider = !!user && user.role !== "tenant";
+  const isTenant = user?.role === "tenant";
   const firstName = user ? user.fullName.trim().split(/\s+/)[0] : "";
   const initials = user ? user.fullName.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") : "";
 
@@ -162,11 +165,16 @@ export default function HomePage() {
   /* the user's saved homes live in the database */
   const userId = user?.id ?? null;
   useEffect(() => {
-    if (!userId) { setSaved([]); return; }
+    if (!userId) { setSaved([]); setSavedItems([]); return; }
     let off = false;
     authFetch("/api/saved-properties")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`))))
-      .then((j: { data?: { id: string }[] }) => { if (!off) setSaved((j.data ?? []).map((p) => p.id)); })
+      .then((j: { data?: ApiCard[] }) => {
+        if (off) return;
+        const cards = (j.data ?? []).map(toCard);
+        setSaved(cards.map((p) => p.id));
+        setSavedItems(cards);
+      })
       .catch((e) => console.log("[saved] could not load saved homes", e));
     return () => { off = true; };
   }, [userId]);
@@ -243,13 +251,16 @@ export default function HomePage() {
       return;
     }
     const wasSaved = saved.includes(id);
+    const property = items.find((item) => item.id === id) ?? savedItems.find((item) => item.id === id);
     setSaved((old) => (wasSaved ? old.filter((x) => x !== id) : [...old, id])); // optimistic
+    setSavedItems((old) => wasSaved ? old.filter((item) => item.id !== id) : property ? [...old, property] : old);
     try {
       const r = await authFetch(`/api/saved-properties/${id}`, { method: wasSaved ? "DELETE" : "POST" });
       if (!r.ok) throw new Error(`status ${r.status}`);
     } catch (e) {
       console.log("[saved] could not update saved homes", e);
       setSaved((old) => (wasSaved ? [...old, id] : old.filter((x) => x !== id))); // roll back
+      setSavedItems((old) => wasSaved && property ? [...old, property] : old.filter((item) => item.id !== id));
       setNotice("Couldn't update your saved homes. Try again.");
     }
   }
@@ -291,7 +302,17 @@ export default function HomePage() {
   }
 
   return (
-    <main>
+    <>
+    {isTenant && user ? <TenantDashboard
+      user={user}
+      properties={items}
+      savedIds={saved}
+      savedProperties={savedItems}
+      loadingProperties={loading}
+      fetchData={authFetch}
+      onSave={toggleSaved}
+      onSignOut={logout}
+    /> : <main>
       <style>{`
 @keyframes pl-spin{to{transform:rotate(360deg)}}
 @keyframes pl-shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
@@ -331,16 +352,16 @@ export default function HomePage() {
 `}</style>
       <header className="site-header">
         <a className="brand" href="#"><span className="brand-mark"><Home size={22} /></span><span>urugo<span className="brand-light">link</span><small>RWANDA PROPERTY MARKETPLACE</small></span></a>
-        <nav className={mobileOpen ? "nav nav-open" : "nav"}>
-          <a href="#properties" onClick={() => setMobileOpen(false)}>Find a home</a>
+        <nav id="primary-navigation" aria-label="Primary navigation" className={mobileOpen ? "nav nav-open" : "nav"}>
+          <a href="#properties" onClick={() => setMobileOpen(false)}>{isTenant ? "Browse homes" : "Find a home"}</a>
           <a href="#how" onClick={() => setMobileOpen(false)}>How it works</a>
-          <a href="#landlords" onClick={() => setMobileOpen(false)}>For landlords</a>
+          {!isTenant && <a href="#landlords" onClick={() => setMobileOpen(false)}>For landlords</a>}
           <a href="#about" onClick={() => setMobileOpen(false)}>About us</a>
           {mobileOpen && auth.status === "guest" && <>
             <Link href="/login" onClick={() => setMobileOpen(false)}>Log in</Link>
             <Link href="/login?tab=register" onClick={() => setMobileOpen(false)}>Create account</Link>
           </>}
-          {mobileOpen && user && <a href="#" onClick={(e) => { e.preventDefault(); logout(); }}>Log out ({firstName})</a>}
+          {mobileOpen && user && <a href="#" onClick={(e) => { e.preventDefault(); logout(); }}>Log out</a>}
         </nav>
         <div className="header-actions">
           {auth.status === "checking" ? <span className="pl-skel" aria-hidden="true" /> : user ? (
@@ -355,7 +376,7 @@ export default function HomePage() {
                   <div className="pl-menu-head"><b>{user.fullName}</b><small>{user.email}</small><span className="pl-role">{ROLE_LABEL[user.role]}</span></div>
                   {user.role === "admin" && <Link role="menuitem" href="/admin-dashboard" onClick={() => setMenuOpen(false)}><Building2 size={16}/> Admin dashboard</Link>}
                   <a role="menuitem" href="#properties" onClick={() => setMenuOpen(false)}><Search size={16}/> Browse homes</a>
-                  <button role="menuitem" type="button" onClick={() => { setMenuOpen(false); listProperty(); }}><Plus size={16}/> {isProvider ? "List a property" : "Become a landlord"}</button>
+                  {!isTenant && <button role="menuitem" type="button" onClick={() => { setMenuOpen(false); listProperty(); }}><Plus size={16}/> {isProvider ? "List a property" : "Become a landlord"}</button>}
                   <button role="menuitem" type="button" className="pl-out" onClick={logout}><LogOut size={16}/> Log out</button>
                 </div>
               )}
@@ -363,9 +384,11 @@ export default function HomePage() {
           ) : (
             <Link className="login-btn" href="/login" style={{display:"inline-flex",alignItems:"center",textDecoration:"none"}}>Log in</Link>
           )}
-          <button className="primary-btn small" onClick={listProperty}><Plus size={16}/> List a property</button>
+          {isTenant
+            ? <button className="primary-btn small" onClick={submitSearch}><Search size={16}/> Find a home</button>
+            : <button className="primary-btn small" onClick={listProperty}><Plus size={16}/> List a property</button>}
         </div>
-        <button className="menu-btn" aria-label="Toggle navigation" onClick={() => setMobileOpen(!mobileOpen)}>{mobileOpen ? <X/> : <Menu/>}</button>
+        <button className="menu-btn" aria-label="Toggle navigation" aria-expanded={mobileOpen} aria-controls="primary-navigation" onClick={() => setMobileOpen(!mobileOpen)}>{mobileOpen ? <X/> : <Menu/>}</button>
       </header>
 
       <section className="hero">
@@ -420,18 +443,18 @@ export default function HomePage() {
 
       <footer><div className="footer-top"><a className="brand footer-brand" href="#"><span className="brand-mark"><Home size={22}/></span><span>urugo<span className="brand-light">link</span><small>RWANDA PROPERTY MARKETPLACE</small></span></a><p>Find a home. Connect. Make it yours.</p></div><div className="footer-bottom"><span>© {new Date().getFullYear()} UrugoLink. Prototype concept.</span><span>Built for Rwanda <span className="flag">🇷🇼</span></span></div></footer>
 
-      {logoutState !== "idle" && (
-        <div className="pl-modal-bg" role="alertdialog" aria-modal="true" aria-labelledby="pl-lo-title" aria-describedby="pl-lo-desc">
-          <div className="pl-modal" ref={logoutRef} tabIndex={-1} data-state={logoutState} aria-live="polite">
-            <div className="pl-lo-icon">{logoutState === "busy" ? <Home className="pl-pulse" size={30}/> : <CheckCircle2 size={34}/>}</div>
-            <h2 id="pl-lo-title">{logoutState === "busy" ? "Logging out…" : "You're logged out"}</h2>
-            <p id="pl-lo-desc">{logoutState === "busy" ? "Ending your session securely." : "See you soon. Your saved homes will be here when you log back in."}</p>
-            {logoutState === "busy" && <div className="pl-bar" aria-hidden="true"><i/></div>}
-          </div>
+    </main>}
+    {logoutState !== "idle" && (
+      <div className="pl-modal-bg" role="alertdialog" aria-modal="true" aria-labelledby="pl-lo-title" aria-describedby="pl-lo-desc">
+        <div className="pl-modal" ref={logoutRef} tabIndex={-1} data-state={logoutState} aria-live="polite">
+          <div className="pl-lo-icon">{logoutState === "busy" ? <Home className="pl-pulse" size={30}/> : <CheckCircle2 size={34}/>}</div>
+          <h2 id="pl-lo-title">{logoutState === "busy" ? "Logging out…" : "You're logged out"}</h2>
+          <p id="pl-lo-desc">{logoutState === "busy" ? "Ending your session securely." : "See you soon. Your saved homes will be here when you log back in."}</p>
+          {logoutState === "busy" && <div className="pl-bar" aria-hidden="true"><i/></div>}
         </div>
-      )}
-
-      {notice && <div className="toast" role="status">{notice}<button onClick={() => setNotice("")}><X size={16}/></button></div>}
-    </main>
+      </div>
+    )}
+    {notice && <div className="toast" role="status">{notice}<button onClick={() => setNotice("")}><X size={16}/></button></div>}
+    </>
   );
 }
